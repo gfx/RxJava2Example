@@ -3,13 +3,13 @@ package com.github.gfx.rxjava2example;
 // See https://jsonplaceholder.typicode.com/
 public class Post {
 
-    long userId;
+    public long userId;
 
-    long id;
+    public long id;
 
-    String title;
+    public String title;
 
-    String body;
+    public String body;
 
     @Override
     public String toString() {

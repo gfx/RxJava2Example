@@ -1,21 +1,23 @@
 package com.github.gfx.rxjava2example;
 
-import com.github.gfx.rxjava2example.databinding.ActivityMainBinding;
-import com.jakewharton.retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory;
-
-import org.reactivestreams.Subscriber;
-import org.reactivestreams.Subscription;
-
 import android.app.Activity;
 import android.databinding.DataBindingUtil;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
+import android.view.View;
+
+import com.github.gfx.rxjava2example.databinding.ActivityMainBinding;
+import com.jakewharton.retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import io.reactivex.Completable;
-import io.reactivex.Flowable;
-import io.reactivex.Observer;
+import io.reactivex.Observable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
-import io.reactivex.disposables.Disposable;
 import io.reactivex.schedulers.Schedulers;
 import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
@@ -39,76 +41,127 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         binding = DataBindingUtil.setContentView(this, R.layout.activity_main);
         binding.setActivity(this);
+
+        setupTextWatcher();
     }
 
-    public void runCompletable() {
+    public void runCompletable(View button) {
+        button.setEnabled(false);
         Log.d(TAG, "runCompletable");
 
         Completable.fromRunnable(() -> Log.d(TAG, "task on " + Thread.currentThread()))
+                .delay(1000, TimeUnit.MILLISECONDS)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
-                .toObservable()
-                .subscribe(new Observer<Object>() {
-                    @Override
-                    public void onSubscribe(Disposable d) {
-                        Log.d(TAG, "onSubscribe " + d + " on " + Thread.currentThread());
-                    }
-
-                    @Override
-                    public void onNext(Object value) {
-                        Log.d(TAG, "onNext " + value + " on " + Thread.currentThread());
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-                        Log.d(TAG, "onError on " + Thread.currentThread());
-                    }
-
-                    @Override
-                    public void onComplete() {
-                        Log.d(TAG, "onComplete on " + Thread.currentThread());
-                    }
+                .subscribe(() -> {
+                    Log.d(TAG, "onComplete");
+                    button.setEnabled(true);
                 });
     }
 
-    public void runObservable() {
-        apiClient.getPostsAsObservable()
-                .subscribeOn(Schedulers.io())
+    public void runObservable(View button) {
+        button.setEnabled(false);
+
+        // parallel requests
+        Observable.just(1, 2, 3, 3, 4)
+                .flatMapSingle((id) -> {
+                    // run on a scheduler for each request
+                    return apiClient.getPostAsSingle(id)
+                            .subscribeOn(Schedulers.io());
+                })
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(posts -> {
-                    Log.d(TAG, posts.toString());
+                .subscribe(post -> {
+                    Log.d(TAG, post.toString());
+                }, (err) -> {
+                    Log.wtf(TAG, err);
+                }, () -> {
+                    button.setEnabled(true);
                 });
     }
 
-    public void runFlowables() {
-        Flowable.range(1, 10)
-                .flatMap(apiClient::getPostAsFlowable)
-                .subscribeOn(Schedulers.io())
+    public void runBenchmark(View button) {
+        button.setEnabled(false);
+
+        System.gc();
+
+        List<Integer> list = new ArrayList<>();
+
+        for (int i = 0; i < 1000; i++) {
+            list.add(i);
+        }
+
+        Completable.fromRunnable(() -> {
+            long t0 = System.nanoTime();
+            long total = 0;
+
+            for (int i = 0; i < 1000; i++) {
+                for (int value : list) {
+                    total += value;
+                }
+            }
+
+            Log.d(TAG, "foreach: " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) + "ms");
+
+            t0 = System.nanoTime();
+
+            for (int i = 0; i < 1000; i++) {
+                total += Observable.fromIterable(list)
+                        .reduce(0L, (t, value) -> t + value).blockingGet();
+            }
+
+            Log.d(TAG, "RxJava2: " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) + "ms");
+
+            t0 = System.nanoTime();
+
+            for (int i = 0; i < 1000; i++) {
+                total += rx.Observable.from(list)
+                        .reduce(0L, (t, value) -> t + value).toBlocking().single();
+            }
+
+            Log.d(TAG, "RxJava1: " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) + "ms");
+
+            t0 = System.nanoTime();
+
+            for (int i = 0; i < 1000; i++) {
+                total += com.annimon.stream.Stream.of(list)
+                        .reduce(0L, (t, value) -> t + value);
+            }
+
+            Log.d(TAG, "LSA:     " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) + "ms");
+
+            Log.d(TAG, "(total=" + total + ")");
+        })
+                .subscribeOn(Schedulers.computation())
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(new Subscriber<Post>() {
-                    Subscription s;
+                .subscribe(() -> button.setEnabled(true));
+    }
 
-                    @Override
-                    public void onSubscribe(Subscription s) {
-                        this.s = s;
-                        s.request(1);
-                    }
+    private void setupTextWatcher() {
+        Observable<CharSequence> events = Observable.create((source) -> {
+            binding.editText.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
 
-                    @Override
-                    public void onNext(Post post) {
-                        Log.d(TAG, post.toString());
-                        s.request(1);
-                    }
+                }
 
-                    @Override
-                    public void onError(Throwable t) {
-                        Log.wtf(TAG, t);
-                    }
+                @Override
+                public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+                    source.onNext(charSequence);
+                }
 
-                    @Override
-                    public void onComplete() {
-                        Log.d(TAG, "onComplete");
-                    }
+                @Override
+                public void afterTextChanged(Editable editable) {
+
+                }
+            });
+        });
+
+        events.debounce(100, TimeUnit.MILLISECONDS)
+                .observeOn(AndroidSchedulers.mainThread()) // debounce() runs on another thread
+                .subscribe((s) -> {
+                    Log.d(TAG, s.toString());
+                    binding.output.setText(s);
                 });
     }
+
 }
